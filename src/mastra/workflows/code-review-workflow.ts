@@ -1,4 +1,5 @@
 import { createStep, createWorkflow } from '@mastra/core/workflows';
+import { RuntimeContext } from '@mastra/core/runtime-context';
 import { z } from 'zod';
 import { parseRepoUrlTool, getCommitsTool, getCommitDetailTool } from '../tools/github-tool';
 
@@ -55,7 +56,7 @@ const parseRepoUrl = createStep({
     const result = await parseRepoUrlTool.execute!({
       context: { url: inputData.repoUrl },
       mastra,
-      runtimeContext: {},
+      runtimeContext: new RuntimeContext(),
     }, {});
 
     return {
@@ -83,7 +84,7 @@ const fetchRecentCommits = createStep({
         per_page: 5, // Get last 5 commits
       },
       mastra,
-      runtimeContext: {},
+      runtimeContext: new RuntimeContext(),
     }, {});
 
     return result;
@@ -100,11 +101,6 @@ const analyzeLatestCommit = createStep({
       throw new Error('No commits found');
     }
 
-    const agent = mastra?.getAgent('codeReviewAgent');
-    if (!agent) {
-      throw new Error('Code Review agent not found');
-    }
-
     // Get the latest commit (first in the list)
     const latestCommit = inputData.commits[0];
 
@@ -113,7 +109,6 @@ const analyzeLatestCommit = createStep({
     const owner = urlParts[3];
     const repo = urlParts[4];
 
-    const { getCommitDetailTool } = agent.tools;
     const result = await getCommitDetailTool.execute!({
       context: {
         owner,
@@ -121,7 +116,7 @@ const analyzeLatestCommit = createStep({
         sha: latestCommit.sha,
       },
       mastra,
-      runtimeContext: {},
+      runtimeContext: new RuntimeContext(),
     }, {});
 
     return result;
