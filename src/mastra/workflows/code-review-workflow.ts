@@ -1,5 +1,6 @@
 import { createStep, createWorkflow } from '@mastra/core/workflows';
 import { z } from 'zod';
+import { parseRepoUrlTool, getCommitsTool, getCommitDetailTool } from '../tools/github-tool';
 
 const repoInfoSchema = z.object({
   owner: z.string(),
@@ -50,13 +51,7 @@ const parseRepoUrl = createStep({
       throw new Error('Repository URL not provided');
     }
 
-    const agent = mastra?.getAgent('codeReviewAgent');
-    if (!agent) {
-      throw new Error('Code Review agent not found');
-    }
-
-    // 使用工具直接执行，而不是通过agent.invoke
-    const { parseRepoUrlTool } = agent.tools;
+    // 直接使用工具
     const result = await parseRepoUrlTool.execute!({
       context: { url: inputData.repoUrl },
       mastra,
@@ -81,12 +76,6 @@ const fetchRecentCommits = createStep({
       throw new Error('Repository information not found');
     }
 
-    const agent = mastra?.getAgent('codeReviewAgent');
-    if (!agent) {
-      throw new Error('Code Review agent not found');
-    }
-
-    const { getCommitsTool } = agent.tools;
     const result = await getCommitsTool.execute!({
       context: {
         owner: inputData.owner,
