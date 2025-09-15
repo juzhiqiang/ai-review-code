@@ -4,6 +4,12 @@ import { Memory } from '@mastra/memory';
 import { LibSQLStore } from '@mastra/libsql';
 import { getCommitsTool, getCommitDetailTool, parseRepoUrlTool } from '../tools/github-tool';
 
+// DeepSeek configuration
+const deepseek = openai({
+  baseURL: 'https://api.deepseek.com/v1',
+  apiKey: process.env.DEEPSEEK_API_KEY,
+});
+
 export const codeReviewAgent = new Agent({
   name: 'Code Review Agent',
   instructions: `
@@ -79,7 +85,7 @@ export const codeReviewAgent = new Agent({
 
     Remember to be thorough but constructive. Focus on helping developers improve their code rather than just pointing out problems.
   `,
-  model: openai('gpt-4o-mini'),
+  model: deepseek('deepseek-chat'),
   tools: {
     parseRepoUrlTool,
     getCommitsTool,
