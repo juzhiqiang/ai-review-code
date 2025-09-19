@@ -8,7 +8,7 @@
     "dev": "mastra dev",
     "build": "mastra build",
     "start": "mastra start",
-    "deploy": "npm run build && wrangler deploy --config .mastra/output/wrangler.json"
+    "deploy": "yarn build && wrangler deploy --config .mastra/output/wrangler.json"
   },
   "keywords": [],
   "author": "",
