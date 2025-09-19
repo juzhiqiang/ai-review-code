@@ -8,15 +8,14 @@
     "dev": "mastra dev",
     "build": "mastra build",
     "start": "mastra start",
-    "deploy": "yarn build && wrangler deploy --config .mastra/output/wrangler.json"
+    "deploy": "bun build && wrangler deploy --config .mastra/output/wrangler.json"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "type": "module",
   "engines": {
-    "node": ">=20.9.0",
-    "bun": "please-use-yarn"
+    "node": ">=20.9.0"
   },
   "dependencies": {
     "@ai-sdk/openai": "^1.0.0",
