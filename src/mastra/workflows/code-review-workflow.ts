@@ -201,7 +201,8 @@ const routeStep = createStep({
       };
     } else {
       // 处理 GitHub URL 的逻辑
-      const commitsUrl = `https://api.github.com/repos/${inputData.owner}/${inputData.repo}/commits?per_page=5`;
+      const repoData = inputData as { owner: string; repo: string; url: string };
+      const commitsUrl = `https://api.github.com/repos/${repoData.owner}/${repoData.repo}/commits?per_page=5`;
 
       try {
         const response = await fetch(commitsUrl, {
@@ -218,7 +219,7 @@ const routeStep = createStep({
         const commits = await response.json() as any[];
         const latestCommit = commits[0];
 
-        const detailUrl = `https://api.github.com/repos/${inputData.owner}/${inputData.repo}/commits/${latestCommit.sha}`;
+        const detailUrl = `https://api.github.com/repos/${repoData.owner}/${repoData.repo}/commits/${latestCommit.sha}`;
 
         const detailResponse = await fetch(detailUrl, {
           headers: {
@@ -238,7 +239,7 @@ const routeStep = createStep({
           message: commitDetail.commit.message,
           author: commitDetail.author?.login || commitDetail.commit.author.name,
           date: commitDetail.commit.author.date,
-          url: `https://github.com/${inputData.owner}/${inputData.repo}/commit/${commitDetail.sha}`,
+          url: `https://github.com/${repoData.owner}/${repoData.repo}/commit/${commitDetail.sha}`,
           stats: commitDetail.stats,
           files: commitDetail.files.map((file: any) => ({
             filename: file.filename,
