@@ -41,145 +41,217 @@ const commitDetailSchema = z.object({
 const parseRepoUrl = createStep({
   id: 'parse-repo-url',
   description: 'Parse GitHub repository URL to extract owner and repo information',
-  inputSchema: z.object({
-    repoUrl: z.string().describe('GitHub repository URL'),
-  }),
-  outputSchema: repoInfoSchema,
+  inputSchema: z.union([
+    z.object({
+      repoUrl: z.string().describe('GitHub repository URL'),
+    }),
+    z.object({
+      diffContent: z.string().describe('Code diff content to review'),
+      commitMessage: z.string().optional().describe('Commit message'),
+      author: z.string().optional().describe('Author name'),
+      commitSha: z.string().optional().describe('Commit SHA'),
+    }),
+  ]),
+  outputSchema: z.union([
+    repoInfoSchema,
+    z.object({
+      type: z.literal('diff'),
+      diffContent: z.string(),
+      commitMessage: z.string().optional(),
+      author: z.string().optional(),
+      commitSha: z.string().optional(),
+    }),
+  ]),
   execute: async ({ inputData, mastra }) => {
     if (!inputData) {
-      throw new Error('Repository URL not provided');
+      throw new Error('Input data not provided');
     }
 
-    // 解析GitHub URL
-    const patterns = [
-      /github\.com\/([^\/]+)\/([^\/\?#]+)/,
-      /github\.com\/([^\/]+)\/([^\/\?#]+)\.git/,
-    ];
+    // 检查输入类型 - 是 GitHub URL 还是代码差异
+    if ('repoUrl' in inputData) {
+      // 处理 GitHub URL
+      const patterns = [
+        /github\.com\/([^\/]+)\/([^\/\?#]+)/,
+        /github\.com\/([^\/]+)\/([^\/\?#]+)\.git/,
+      ];
 
-    let owner = '';
-    let repo = '';
+      let owner = '';
+      let repo = '';
 
-    for (const pattern of patterns) {
-      const match = inputData.repoUrl.match(pattern);
-      if (match) {
-        owner = match[1];
-        repo = match[2];
+      for (const pattern of patterns) {
+        const match = inputData.repoUrl.match(pattern);
+        if (match) {
+          owner = match[1];
+          repo = match[2];
 
-        // Remove .git suffix if present
-        if (repo.endsWith('.git')) {
-          repo = repo.slice(0, -4);
+          // Remove .git suffix if present
+          if (repo.endsWith('.git')) {
+            repo = repo.slice(0, -4);
+          }
+          break;
         }
-        break;
-      }
-    }
-
-    if (!owner || !repo) {
-      throw new Error(`Invalid GitHub URL format: ${inputData.repoUrl}`);
-    }
-
-    return {
-      owner,
-      repo,
-      url: inputData.repoUrl,
-    };
-  },
-});
-
-const fetchRecentCommits = createStep({
-  id: 'fetch-recent-commits',
-  description: 'Fetch recent commits from the repository',
-  inputSchema: repoInfoSchema,
-  outputSchema: commitsSchema,
-  execute: async ({ inputData, mastra }) => {
-    if (!inputData) {
-      throw new Error('Repository information not found');
-    }
-
-    // 获取提交信息
-    const url = `https://api.github.com/repos/${inputData.owner}/${inputData.repo}/commits?per_page=5`;
-
-    try {
-      const response = await fetch(url, {
-        headers: {
-          'Accept': 'application/vnd.github.v3+json',
-          'User-Agent': 'Code-Review-Agent/1.0',
-        },
-      });
-
-      if (!response.ok) {
-        throw new Error(`GitHub API error: ${response.status} ${response.statusText}`);
       }
 
-      const commits = await response.json() as any[];
+      if (!owner || !repo) {
+        throw new Error(`Invalid GitHub URL format: ${inputData.repoUrl}`);
+      }
 
       return {
-        commits: commits.map(commit => ({
-          sha: commit.sha,
-          message: commit.commit.message,
-          author: commit.author?.login || commit.commit.author.name,
-          date: commit.commit.author.date,
-          url: `https://github.com/${inputData.owner}/${inputData.repo}/commit/${commit.sha}`,
-        })),
+        owner,
+        repo,
+        url: inputData.repoUrl,
       };
-    } catch (error) {
-      throw new Error(`Failed to fetch commits: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    } else {
+      // 处理代码差异
+      return {
+        type: 'diff' as const,
+        diffContent: inputData.diffContent,
+        commitMessage: inputData.commitMessage,
+        author: inputData.author,
+        commitSha: inputData.commitSha,
+      };
     }
   },
 });
 
-const analyzeLatestCommit = createStep({
-  id: 'analyze-latest-commit',
-  description: 'Get detailed information about the latest commit',
-  inputSchema: commitsSchema,
+const routeStep = createStep({
+  id: 'route-step',
+  description: 'Route to appropriate processing path',
+  inputSchema: z.union([
+    repoInfoSchema,
+    z.object({
+      type: z.literal('diff'),
+      diffContent: z.string(),
+      commitMessage: z.string().optional(),
+      author: z.string().optional(),
+      commitSha: z.string().optional(),
+    }),
+  ]),
   outputSchema: commitDetailSchema,
   execute: async ({ inputData, mastra }) => {
-    if (!inputData?.commits || inputData.commits.length === 0) {
-      throw new Error('No commits found');
+    if (!inputData) {
+      throw new Error('Input data not provided');
     }
 
-    // Get the latest commit (first in the list)
-    const latestCommit = inputData.commits[0];
+    if ('type' in inputData && inputData.type === 'diff') {
+      // 处理代码差异的逻辑
+      const files = [];
+      const diffLines = inputData.diffContent.split('\n');
 
-    // Extract owner and repo from the commit URL
-    const urlParts = latestCommit.url.split('/');
-    const owner = urlParts[3];
-    const repo = urlParts[4];
+      let currentFile = null;
+      let additions = 0;
+      let deletions = 0;
+      let patch = '';
 
-    // 获取提交详情
-    const url = `https://api.github.com/repos/${owner}/${repo}/commits/${latestCommit.sha}`;
+      for (const line of diffLines) {
+        if (line.startsWith('diff --git')) {
+          if (currentFile) {
+            files.push({
+              filename: currentFile,
+              additions,
+              deletions,
+              changes: additions + deletions,
+              status: 'modified',
+              patch,
+            });
+          }
 
-    try {
-      const response = await fetch(url, {
-        headers: {
-          'Accept': 'application/vnd.github.v3+json',
-          'User-Agent': 'Code-Review-Agent/1.0',
-        },
-      });
+          const match = line.match(/diff --git a\/(.+) b\/(.+)/);
+          currentFile = match ? match[2] : '';
+          additions = 0;
+          deletions = 0;
+          patch = '';
+        }
 
-      if (!response.ok) {
-        throw new Error(`GitHub API error: ${response.status} ${response.statusText}`);
+        if (line.startsWith('+') && !line.startsWith('+++')) {
+          additions++;
+        } else if (line.startsWith('-') && !line.startsWith('---')) {
+          deletions++;
+        }
+
+        patch += line + '\n';
       }
 
-      const commitDetail = await response.json() as any;
+      if (currentFile) {
+        files.push({
+          filename: currentFile,
+          additions,
+          deletions,
+          changes: additions + deletions,
+          status: 'modified',
+          patch,
+        });
+      }
+
+      const totalAdditions = files.reduce((sum, file) => sum + file.additions, 0);
+      const totalDeletions = files.reduce((sum, file) => sum + file.deletions, 0);
 
       return {
-        sha: commitDetail.sha,
-        message: commitDetail.commit.message,
-        author: commitDetail.author?.login || commitDetail.commit.author.name,
-        date: commitDetail.commit.author.date,
-        url: `https://github.com/${owner}/${repo}/commit/${commitDetail.sha}`,
-        stats: commitDetail.stats,
-        files: commitDetail.files.map((file: any) => ({
-          filename: file.filename,
-          additions: file.additions,
-          deletions: file.deletions,
-          changes: file.changes,
-          status: file.status,
-          patch: file.patch,
-        })),
+        sha: inputData.commitSha || 'direct-diff',
+        message: inputData.commitMessage || 'Direct diff review',
+        author: inputData.author || 'Unknown',
+        date: new Date().toISOString(),
+        url: '',
+        stats: {
+          additions: totalAdditions,
+          deletions: totalDeletions,
+          total: totalAdditions + totalDeletions,
+        },
+        files,
       };
-    } catch (error) {
-      throw new Error(`Failed to fetch commit detail: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    } else {
+      // 处理 GitHub URL 的逻辑
+      const commitsUrl = `https://api.github.com/repos/${inputData.owner}/${inputData.repo}/commits?per_page=5`;
+
+      try {
+        const response = await fetch(commitsUrl, {
+          headers: {
+            'Accept': 'application/vnd.github.v3+json',
+            'User-Agent': 'Code-Review-Agent/1.0',
+          },
+        });
+
+        if (!response.ok) {
+          throw new Error(`GitHub API error: ${response.status} ${response.statusText}`);
+        }
+
+        const commits = await response.json() as any[];
+        const latestCommit = commits[0];
+
+        const detailUrl = `https://api.github.com/repos/${inputData.owner}/${inputData.repo}/commits/${latestCommit.sha}`;
+
+        const detailResponse = await fetch(detailUrl, {
+          headers: {
+            'Accept': 'application/vnd.github.v3+json',
+            'User-Agent': 'Code-Review-Agent/1.0',
+          },
+        });
+
+        if (!detailResponse.ok) {
+          throw new Error(`GitHub API error: ${detailResponse.status} ${detailResponse.statusText}`);
+        }
+
+        const commitDetail = await detailResponse.json() as any;
+
+        return {
+          sha: commitDetail.sha,
+          message: commitDetail.commit.message,
+          author: commitDetail.author?.login || commitDetail.commit.author.name,
+          date: commitDetail.commit.author.date,
+          url: `https://github.com/${inputData.owner}/${inputData.repo}/commit/${commitDetail.sha}`,
+          stats: commitDetail.stats,
+          files: commitDetail.files.map((file: any) => ({
+            filename: file.filename,
+            additions: file.additions,
+            deletions: file.deletions,
+            changes: file.changes,
+            status: file.status,
+            patch: file.patch,
+          })),
+        };
+      } catch (error) {
+        throw new Error(`Failed to fetch commit details: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      }
     }
   },
 });
@@ -260,16 +332,23 @@ Focus on security, performance, code quality, best practices, architecture, and 
 
 const codeReviewWorkflow = createWorkflow({
   id: 'code-review-workflow',
-  inputSchema: z.object({
-    repoUrl: z.string().describe('GitHub repository URL to review'),
-  }),
+  inputSchema: z.union([
+    z.object({
+      repoUrl: z.string().describe('GitHub repository URL to review'),
+    }),
+    z.object({
+      diffContent: z.string().describe('Code diff content to review'),
+      commitMessage: z.string().optional().describe('Commit message'),
+      author: z.string().optional().describe('Author name'),
+      commitSha: z.string().optional().describe('Commit SHA'),
+    }),
+  ]),
   outputSchema: z.object({
     review: z.string(),
   }),
 })
   .then(parseRepoUrl)
-  .then(fetchRecentCommits)
-  .then(analyzeLatestCommit)
+  .then(routeStep)
   .then(generateCodeReview);
 
 codeReviewWorkflow.commit();
